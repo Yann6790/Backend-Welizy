@@ -1,0 +1,339 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  STUDENT
+  TEACHER
+  ADMIN
+}
+
+model user {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  name          String
+  firstname     String
+  lastname      String
+  image         String?
+  role          UserRole  @default(STUDENT)
+  isActive      Boolean   @default(true)
+  banned        Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions       session[]
+  accounts       account[]
+  studentProfile StudentProfile?
+  teacherProfile TeacherProfile?
+  createdSaes    Sae[]
+  saeInvitations SaeInvitation[]
+  announcements  Announcement[]
+  submissions    StudentSubmission[]
+  milestoneProgress MilestoneProgress[]
+
+  @@map("user")
+}
+
+model session {
+  id        String   @id @default(uuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+
+  user user @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("session")
+}
+
+model account {
+  id                    String    @id @default(uuid())
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user user @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("account")
+}
+
+model verification {
+  id         String    @id @default(uuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime? @default(now())
+  updatedAt  DateTime? @updatedAt
+
+  @@map("verification")
+}
+
+model StudentProfile {
+  id          String @id @default(uuid())
+  userId      String @unique
+  promotionId String
+  groupId     String
+  isValidated Boolean @default(false)
+
+  user      user      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  promotion Promotion @relation(fields: [promotionId], references: [id])
+  group     Group     @relation(fields: [groupId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+model TeacherProfile {
+  id     String @id @default(uuid())
+  userId String @unique
+
+  user user @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
+
+model Promotion {
+  id           String  @id @default(uuid())
+  label        String
+  yearLevel    Int?
+  academicYear Int?
+  isActive     Boolean @default(true)
+
+  semesters Semester[]
+  students  StudentProfile[]
+
+  createdAt DateTime @default(now())
+}
+
+model Semester {
+  id          String @id @default(uuid())
+  number      Int
+  promotionId String
+
+  promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  saes      Sae[]
+
+  createdAt DateTime @default(now())
+}
+
+model Group {
+  id          String @id @default(uuid())
+  name        String
+
+  students  StudentProfile[]
+
+  createdAt DateTime @default(now())
+}
+
+model Sae {
+  id          String   @id @default(uuid())
+  title       String
+  bannerId    String
+  description String   @db.Text
+  instructions String? @db.Text
+  semesterId  String
+  tdGroup     TdGroup?
+  thematicId  String
+  createdById String
+  startDate   DateTime
+  dueDate     DateTime
+  isPublished Boolean  @default(false)
+
+  semester      Semester        @relation(fields: [semesterId], references: [id])
+  thematic      Thematic        @relation(fields: [thematicId], references: [id])
+  banner        Banner          @relation(fields: [bannerId], references: [id])
+  createdBy     user            @relation(fields: [createdById], references: [id])
+  invitations   SaeInvitation[]
+  announcements Announcement[]
+  documents     SaeDocument[]
+  submissions   StudentSubmission[]
+  gradeCategories GradeCategory[]
+  milestones      SaeMilestone[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([semesterId])
+  @@index([thematicId])
+  @@index([bannerId])
+  @@index([isPublished])
+  @@index([dueDate])
+}
+
+model Announcement {
+  id          String @id @default(uuid())
+  title       String
+  content     String @db.Text
+  saeId       String
+  createdById String
+
+  sae       Sae  @relation(fields: [saeId], references: [id], onDelete: Cascade)
+  createdBy user @relation(fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([saeId])
+}
+
+model Banner {
+  id   String @id @default(uuid())
+  url  String @unique
+  saes Sae[]
+
+  createdAt DateTime @default(now())
+}
+
+model Thematic {
+  id    String @id @default(uuid())
+  code  String @unique
+  label String
+  saes  Sae[]
+
+  createdAt DateTime @default(now())
+}
+
+model SaeInvitation {
+  id     String @id @default(uuid())
+  saeId  String
+  userId String
+
+  sae  Sae  @relation(fields: [saeId], references: [id], onDelete: Cascade)
+  user user @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([saeId, userId])
+}
+
+enum DocumentType {
+  SUJET
+  RESOURCE
+  AUTRE
+}
+
+enum TdGroup {
+  A
+  B
+}
+
+model SaeDocument {
+  id       String       @id @default(uuid())
+  saeId    String
+  url      String
+  name     String
+  mimeType String
+  type     DocumentType
+
+  sae Sae @relation(fields: [saeId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([saeId])
+}
+
+model StudentSubmission {
+  id          String   @id @default(uuid())
+  saeId       String
+  studentId   String
+  url         String
+  name        String
+  mimeType    String
+  description String   @db.Text
+  imageUrl    String?
+  isPublic    Boolean  @default(false)
+  isLate      Boolean  @default(false)
+  lateTime    Int?
+  submittedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  sae     Sae     @relation(fields: [saeId], references: [id], onDelete: Cascade)
+  student user    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  grades  Grade[]
+
+  @@unique([saeId, studentId])
+  @@index([saeId])
+}
+
+model GradeCategory {
+  id    String @id @default(uuid())
+  saeId String
+  name  String
+
+  sae    Sae     @relation(fields: [saeId], references: [id], onDelete: Cascade)
+  grades Grade[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([saeId])
+}
+
+model Grade {
+  id           String @id @default(uuid())
+  categoryId   String
+  submissionId String
+  value        Float
+
+  category   GradeCategory     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  submission StudentSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([categoryId, submissionId])
+  @@index([submissionId])
+}
+
+model SaeMilestone {
+  id          String @id @default(uuid())
+  saeId       String
+  title       String
+  description String? @db.Text
+  position    Int
+
+  sae      Sae                 @relation(fields: [saeId], references: [id], onDelete: Cascade)
+  progress MilestoneProgress[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([saeId])
+}
+
+model MilestoneProgress {
+  id          String   @id @default(uuid())
+  milestoneId String
+  studentId   String
+  message     String   @db.Text
+  isReached   Boolean  @default(true)
+  reachedAt   DateTime? @default(now())
+
+  milestone SaeMilestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  student   user         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([milestoneId, studentId])
+  @@index([milestoneId])
+  @@index([studentId])
+}

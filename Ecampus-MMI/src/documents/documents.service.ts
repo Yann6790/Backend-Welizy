@@ -1,0 +1,641 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { UserRole } from '@prisma/client';
+import { deriveTdGroupFromGroupName } from '../lib/td-group';
+import { PrismaService } from '../prisma/prisma.service';
+import { computeSaeStatus } from '../saes/types/sae.types';
+import { CreateSaeDocumentDto } from './dto/create-sae-document.dto';
+import { CreateSubmissionDto } from './dto/create-submission.dto';
+import {
+  SaeDocumentResponse,
+  StudentSubmissionResponse,
+} from './types/document.types';
+
+const SAE_DOCUMENT_LIMIT = 3;
+
+@Injectable()
+export class DocumentsService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async findSaeDocuments(
+    saeId: string,
+    requestingUserRole?: UserRole,
+  ): Promise<SaeDocumentResponse[]> {
+    const sae = await this.prisma.sae.findUnique({
+      where: { id: saeId, deletedAt: null },
+      select: { isPublished: true },
+    });
+
+    if (!sae) throw new NotFoundException('SAE non trouvée');
+
+    const isTeacherOrAdmin =
+      requestingUserRole === UserRole.TEACHER ||
+      requestingUserRole === UserRole.ADMIN;
+
+    if (!sae.isPublished && !isTeacherOrAdmin) {
+      throw new ForbiddenException("Cette SAE n'est pas encore publiée");
+    }
+
+    const documents = await this.prisma.saeDocument.findMany({
+      where: { saeId },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return documents.map((doc) => ({
+      id: doc.id,
+      saeId: doc.saeId,
+      url: doc.url,
+      name: doc.name,
+      mimeType: doc.mimeType,
+      type: doc.type,
+      createdAt: doc.createdAt,
+    }));
+  }
+
+  async addSaeDocument(
+    saeId: string,
+    dto: CreateSaeDocumentDto,
+    requestingUserId: string,
+  ): Promise<SaeDocumentResponse> {
+    const sae = await this.prisma.sae.findUnique({
+      where: { id: saeId, deletedAt: null },
+      select: {
+        createdById: true,
+        invitations: { select: { userId: true } },
+        _count: { select: { documents: true } },
+      },
+    });
+
+    if (!sae) throw new NotFoundException('SAE non trouvée');
+
+    this.assertCanWriteOnSae(
+      sae.createdById,
+      sae.invitations,
+      requestingUserId,
+    );
+
+    if (sae._count.documents >= SAE_DOCUMENT_LIMIT) {
+      throw new BadRequestException(
+        `Une SAE ne peut pas avoir plus de ${SAE_DOCUMENT_LIMIT} documents`,
+      );
+    }
+
+    const document = await this.prisma.saeDocument.create({
+      data: {
+        saeId,
+        url: dto.url,
+        name: dto.name,
+        mimeType: dto.mimeType,
+        type: dto.type,
+      },
+    });
+
+    return {
+      id: document.id,
+      saeId: document.saeId,
+      url: document.url,
+      name: document.name,
+      mimeType: document.mimeType,
+      type: document.type,
+      createdAt: document.createdAt,
+    };
+  }
+
+  async removeSaeDocument(id: string, requestingUserId: string): Promise<void> {
+    const document = await this.prisma.saeDocument.findUnique({
+      where: { id },
+      include: {
+        sae: {
+          select: {
+            deletedAt: true,
+            createdById: true,
+            invitations: { select: { userId: true } },
+          },
+        },
+      },
+    });
+
+    if (!document || document.sae.deletedAt) {
+      throw new NotFoundException('Document non trouvé');
+    }
+
+    this.assertCanWriteOnSae(
+      document.sae.createdById,
+      document.sae.invitations,
+      requestingUserId,
+    );
+
+    await this.prisma.saeDocument.delete({ where: { id } });
+  }
+
+  async submitDocument(
+    saeId: string,
+    dto: CreateSubmissionDto,
+    studentId: string,
+  ): Promise<StudentSubmissionResponse> {
+    const sae = await this.prisma.sae.findUnique({
+      where: { id: saeId, deletedAt: null },
+      include: {
+        semester: { select: { promotionId: true } },
+      },
+    });
+
+    if (!sae) throw new NotFoundException('SAE non trouvée');
+    if (!sae.isPublished)
+      throw new ForbiddenException("Cette SAE n'est pas encore publiée");
+
+    const status = computeSaeStatus(sae);
+    if (status !== 'ongoing' && status !== 'finished') {
+      throw new BadRequestException(
+        'Les rendus ne sont autorisés que lorsque la SAE est publiée',
+      );
+    }
+
+    const now = new Date();
+    const isLate = now > sae.dueDate;
+    const lateTime = isLate
+      ? Math.floor((now.getTime() - sae.dueDate.getTime()) / 1000)
+      : null;
+
+    const studentProfile = await this.prisma.studentProfile.findUnique({
+      where: { userId: studentId },
+      select: {
+        promotionId: true,
+        group: { select: { name: true } },
+      },
+    });
+
+    if (!studentProfile) {
+      throw new ForbiddenException('Profil étudiant non trouvé');
+    }
+
+    if (sae.semester.promotionId !== studentProfile.promotionId) {
+      throw new ForbiddenException(
+        "Cette SAE n'appartient pas à votre promotion",
+      );
+    }
+
+    const studentTdGroup = deriveTdGroupFromGroupName(
+      studentProfile.group?.name,
+    );
+    if (!studentTdGroup) {
+      throw new ForbiddenException(
+        'Impossible de déterminer votre groupe TD à partir de votre groupe',
+      );
+    }
+
+    if (sae.tdGroup && sae.tdGroup !== studentTdGroup) {
+      throw new ForbiddenException(
+        "Cette SAE n'est pas destinée à votre groupe TD",
+      );
+    }
+
+    const submission = await this.prisma.studentSubmission.upsert({
+      where: { saeId_studentId: { saeId, studentId } },
+      create: {
+        saeId,
+        studentId,
+        url: dto.url,
+        name: dto.fileName,
+        mimeType: dto.mimeType,
+        description: dto.description,
+        imageUrl: dto.imageUrl,
+        isPublic: dto.isPublic ?? false,
+        isLate,
+        lateTime,
+      },
+      update: {
+        url: dto.url,
+        name: dto.fileName,
+        mimeType: dto.mimeType,
+        description: dto.description,
+        imageUrl: dto.imageUrl,
+        isPublic: dto.isPublic,
+        isLate,
+        lateTime,
+        submittedAt: now,
+      },
+      include: {
+        student: { select: { firstname: true, lastname: true } },
+      },
+    });
+
+    return {
+      id: submission.id,
+      saeId: submission.saeId,
+      name: {
+        firstname: submission.student.firstname,
+        lastname: submission.student.lastname,
+      },
+      url: submission.url,
+      fileName: submission.name,
+      mimeType: submission.mimeType,
+      description: submission.description,
+      imageUrl: submission.imageUrl,
+      isPublic: submission.isPublic,
+      isLate: submission.isLate,
+      lateTime: submission.lateTime,
+      submittedAt: submission.submittedAt,
+      updatedAt: submission.updatedAt,
+    };
+  }
+
+  async findMySubmission(
+    saeId: string,
+    studentId: string,
+  ): Promise<StudentSubmissionResponse> {
+    const sae = await this.prisma.sae.findUnique({
+      where: { id: saeId, deletedAt: null },
+      select: { tdGroup: true },
+    });
+
+    if (!sae) {
+      throw new NotFoundException('SAE non trouvée');
+    }
+
+    const studentProfile = await this.prisma.studentProfile.findUnique({
+      where: { userId: studentId },
+      select: { group: { select: { name: true } } },
+    });
+
+    if (!studentProfile) {
+      throw new ForbiddenException('Profil étudiant non trouvé');
+    }
+
+    const studentTdGroup = deriveTdGroupFromGroupName(
+      studentProfile.group?.name,
+    );
+    if (!studentTdGroup) {
+      throw new ForbiddenException(
+        'Impossible de déterminer votre groupe TD à partir de votre groupe',
+      );
+    }
+
+    if (sae.tdGroup && sae.tdGroup !== studentTdGroup) {
+      throw new ForbiddenException(
+        "Cette SAE n'est pas destinée à votre groupe TD",
+      );
+    }
+
+    const submission = await this.prisma.studentSubmission.findUnique({
+      where: { saeId_studentId: { saeId, studentId } },
+      include: {
+        student: { select: { firstname: true, lastname: true } },
+      },
+    });
+
+    if (!submission)
+      throw new NotFoundException('Aucun rendu trouvé pour cette SAE');
+
+    return {
+      id: submission.id,
+      saeId: submission.saeId,
+      name: {
+        firstname: submission.student.firstname,
+        lastname: submission.student.lastname,
+      },
+      url: submission.url,
+      fileName: submission.name,
+      mimeType: submission.mimeType,
+      description: submission.description,
+      imageUrl: submission.imageUrl,
+      isPublic: submission.isPublic,
+      isLate: submission.isLate,
+      lateTime: submission.lateTime,
+      submittedAt: submission.submittedAt,
+      updatedAt: submission.updatedAt,
+    };
+  }
+
+  async findAllSubmissions(
+    saeId: string,
+    requestingUserId?: string,
+    requestingUserRole?: UserRole,
+  ): Promise<StudentSubmissionResponse[]> {
+    const sae = await this.prisma.sae.findUnique({
+      where: { id: saeId, deletedAt: null },
+      select: {
+        isPublished: true,
+        tdGroup: true,
+        createdById: true,
+        invitations: { select: { userId: true } },
+      },
+    });
+
+    if (!sae) throw new NotFoundException('SAE non trouvée');
+
+    const isAdmin = requestingUserRole === UserRole.ADMIN;
+    const isOwner = sae.createdById === requestingUserId;
+    const isInvited = sae.invitations.some(
+      (inv) => inv.userId === requestingUserId,
+    );
+
+    const canSeePrivateSubmissions = isAdmin || isOwner || isInvited;
+
+    if (requestingUserRole === UserRole.STUDENT && requestingUserId) {
+      const profile = await this.prisma.studentProfile.findUnique({
+        where: { userId: requestingUserId },
+        select: { group: { select: { name: true } } },
+      });
+
+      if (!profile) {
+        throw new ForbiddenException('Profil étudiant non trouvé');
+      }
+
+      const studentTdGroup = deriveTdGroupFromGroupName(profile.group?.name);
+      if (!studentTdGroup) {
+        throw new ForbiddenException(
+          'Impossible de déterminer votre groupe TD à partir de votre groupe',
+        );
+      }
+
+      if (sae.tdGroup && sae.tdGroup !== studentTdGroup) {
+        throw new ForbiddenException(
+          "Cette SAE n'est pas destinée à votre groupe TD",
+        );
+      }
+    }
+
+    if (!sae.isPublished && !canSeePrivateSubmissions) {
+      throw new ForbiddenException("Cette SAE n'est pas encore publiée");
+    }
+
+    const submissions = await this.prisma.studentSubmission.findMany({
+      where: {
+        saeId,
+        OR: canSeePrivateSubmissions
+          ? undefined
+          : [{ isPublic: true }, { studentId: requestingUserId || 'NONE' }],
+      },
+      include: {
+        student: { select: { firstname: true, lastname: true } },
+      },
+      orderBy: { submittedAt: 'desc' },
+    });
+
+    return submissions.map((s) => ({
+      id: s.id,
+      saeId: s.saeId,
+      name: {
+        firstname: s.student.firstname,
+        lastname: s.student.lastname,
+      },
+      url: s.url,
+      fileName: s.name,
+      mimeType: s.mimeType,
+      description: s.description,
+      imageUrl: s.imageUrl,
+      isPublic: s.isPublic,
+      isLate: s.isLate,
+      lateTime: s.lateTime,
+      submittedAt: s.submittedAt,
+      updatedAt: s.updatedAt,
+    }));
+  }
+
+  private assertCanWriteOnSae(
+    createdById: string,
+    invitations: { userId: string }[],
+    requestingUserId: string,
+  ): void {
+    const isOwner = createdById === requestingUserId;
+    const isInvited = invitations.some(
+      (inv) => inv.userId === requestingUserId,
+    );
+
+    if (!isOwner && !isInvited) {
+      throw new ForbiddenException(
+        "Vous n'avez pas les droits d'écriture sur cette SAE",
+      );
+    }
+  }
+
+  async updateSubmissionVisibility(
+    saeId: string,
+    studentId: string,
+    isPublic: boolean,
+  ): Promise<StudentSubmissionResponse> {
+    const submission = await this.prisma.studentSubmission.findUnique({
+      where: { saeId_studentId: { saeId, studentId } },
+      include: {
+        student: { select: { firstname: true, lastname: true } },
+      },
+    });
+
+    if (!submission) {
+      throw new NotFoundException('Aucun rendu trouvé pour cette SAE');
+    }
+
+    if (submission.studentId !== studentId) {
+      throw new ForbiddenException(
+        'Vous ne pouvez modifier que votre propre rendu',
+      );
+    }
+
+    const updatedSubmission = await this.prisma.studentSubmission.update({
+      where: { id: submission.id },
+      data: { isPublic },
+      include: {
+        student: { select: { firstname: true, lastname: true } },
+      },
+    });
+
+    return {
+      id: updatedSubmission.id,
+      saeId: updatedSubmission.saeId,
+      name: {
+        firstname: updatedSubmission.student.firstname,
+        lastname: updatedSubmission.student.lastname,
+      },
+      url: updatedSubmission.url,
+      fileName: updatedSubmission.name,
+      mimeType: updatedSubmission.mimeType,
+      description: updatedSubmission.description,
+      imageUrl: updatedSubmission.imageUrl,
+      isPublic: updatedSubmission.isPublic,
+      isLate: updatedSubmission.isLate,
+      lateTime: updatedSubmission.lateTime,
+      submittedAt: updatedSubmission.submittedAt,
+      updatedAt: updatedSubmission.updatedAt,
+    };
+  }
+
+  async updateAllSaeSubmissionsVisibility(
+    saeId: string,
+    requestingUserId: string,
+    requestingUserRole: UserRole,
+    isPublic: boolean,
+  ): Promise<{ updatedCount: number }> {
+    const sae = await this.prisma.sae.findUnique({
+      where: { id: saeId, deletedAt: null },
+      select: {
+        createdById: true,
+        invitations: { select: { userId: true } },
+      },
+    });
+
+    if (!sae) {
+      throw new NotFoundException('SAE non trouvée');
+    }
+
+    const isAdmin = requestingUserRole === UserRole.ADMIN;
+    if (!isAdmin) {
+      this.assertCanWriteOnSae(
+        sae.createdById,
+        sae.invitations,
+        requestingUserId,
+      );
+    }
+
+    const result = await this.prisma.studentSubmission.updateMany({
+      where: {
+        saeId,
+        isPublic: { not: isPublic },
+      },
+      data: { isPublic },
+    });
+
+    return { updatedCount: result.count };
+  }
+
+  async updateSpecificSubmissionVisibility(
+    saeId: string,
+    submissionId: string,
+    requestingUserId: string,
+    requestingUserRole: UserRole,
+    isPublic: boolean,
+  ): Promise<StudentSubmissionResponse> {
+    const sae = await this.prisma.sae.findUnique({
+      where: { id: saeId, deletedAt: null },
+      select: {
+        createdById: true,
+        invitations: { select: { userId: true } },
+      },
+    });
+
+    if (!sae) {
+      throw new NotFoundException('SAE non trouvée');
+    }
+
+    const isAdmin = requestingUserRole === UserRole.ADMIN;
+    if (!isAdmin) {
+      this.assertCanWriteOnSae(
+        sae.createdById,
+        sae.invitations,
+        requestingUserId,
+      );
+    }
+
+    const submission = await this.prisma.studentSubmission.findUnique({
+      where: { id: submissionId },
+      include: {
+        student: { select: { firstname: true, lastname: true } },
+      },
+    });
+
+    if (!submission || submission.saeId !== saeId) {
+      throw new NotFoundException('Rendu non trouvé');
+    }
+
+    const updatedSubmission = await this.prisma.studentSubmission.update({
+      where: { id: submissionId },
+      data: { isPublic },
+      include: {
+        student: { select: { firstname: true, lastname: true } },
+      },
+    });
+
+    return {
+      id: updatedSubmission.id,
+      saeId: updatedSubmission.saeId,
+      name: {
+        firstname: updatedSubmission.student.firstname,
+        lastname: updatedSubmission.student.lastname,
+      },
+      url: updatedSubmission.url,
+      fileName: updatedSubmission.name,
+      mimeType: updatedSubmission.mimeType,
+      description: updatedSubmission.description,
+      imageUrl: updatedSubmission.imageUrl,
+      isPublic: updatedSubmission.isPublic,
+      isLate: updatedSubmission.isLate,
+      lateTime: updatedSubmission.lateTime,
+      submittedAt: updatedSubmission.submittedAt,
+      updatedAt: updatedSubmission.updatedAt,
+    };
+  }
+
+  async removeSpecificSubmission(
+    saeId: string,
+    submissionId: string,
+    requestingUserId: string,
+    requestingUserRole: UserRole,
+  ): Promise<void> {
+    const sae = await this.prisma.sae.findUnique({
+      where: { id: saeId, deletedAt: null },
+      select: {
+        createdById: true,
+        invitations: { select: { userId: true } },
+      },
+    });
+
+    if (!sae) {
+      throw new NotFoundException('SAE non trouvée');
+    }
+
+    const isAdmin = requestingUserRole === UserRole.ADMIN;
+    if (!isAdmin) {
+      this.assertCanWriteOnSae(
+        sae.createdById,
+        sae.invitations,
+        requestingUserId,
+      );
+    }
+
+    const submission = await this.prisma.studentSubmission.findUnique({
+      where: { id: submissionId },
+      select: { id: true, saeId: true },
+    });
+
+    if (!submission || submission.saeId !== saeId) {
+      throw new NotFoundException('Rendu non trouvé');
+    }
+
+    await this.prisma.studentSubmission.delete({
+      where: { id: submissionId },
+    });
+  }
+
+  async updateAllPromotionSubmissionsVisibility(
+    promotionId: string,
+    isPublic: boolean,
+  ): Promise<{ updatedCount: number }> {
+    const promotion = await this.prisma.promotion.findUnique({
+      where: { id: promotionId },
+      select: { id: true },
+    });
+
+    if (!promotion) {
+      throw new NotFoundException('Promotion non trouvée');
+    }
+
+    const result = await this.prisma.studentSubmission.updateMany({
+      where: {
+        isPublic: { not: isPublic },
+        sae: {
+          deletedAt: null,
+          semester: {
+            promotionId,
+          },
+        },
+      },
+      data: { isPublic },
+    });
+
+    return { updatedCount: result.count };
+  }
+}
