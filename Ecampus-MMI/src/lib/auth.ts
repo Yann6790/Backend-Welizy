@@ -9,6 +9,7 @@ const trustedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
   'https://ecampus-mmi.onrender.com',
+  'https://ecampus-mmi-sill.onrender.com',
   'https://welizy.fr.yann.allain.mmi-velizy.fr',
   'https://ecampus-mmi.vercel.app',
 ];
