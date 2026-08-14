@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsUrl } from 'class-validator';
+import { IsOptional, IsString } from 'class-validator';
 
 export class OnboardingDto {
   @IsString({
@@ -11,12 +11,9 @@ export class OnboardingDto {
   })
   groupId: string;
 
-  @IsUrl(
-    {},
-    {
-      message: "L'URL de l'image de profil n'est pas valide",
-    },
-  )
+  @IsString({
+    message: "L'URL de l'image de profil doit être une chaîne de caractères",
+  })
   @IsOptional()
   imageUrl?: string;
 }

@@ -1,7 +1,7 @@
-import { IsString, IsUrl, IsOptional, IsBoolean } from 'class-validator';
+import { IsString, IsOptional, IsBoolean } from 'class-validator';
 
 export class CreateSubmissionDto {
-  @IsUrl()
+  @IsString()
   url: string;
 
   @IsString()
@@ -13,7 +13,7 @@ export class CreateSubmissionDto {
   @IsString()
   description: string;
 
-  @IsUrl()
+  @IsString()
   @IsOptional()
   imageUrl?: string;
 

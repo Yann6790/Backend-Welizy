@@ -1,7 +1,7 @@
-import { IsNotEmpty, IsUrl } from 'class-validator';
+import { IsNotEmpty, IsString } from 'class-validator';
 
 export class UpdateProfileImageDto {
-  @IsUrl({}, { message: "L'URL de l'image n'est pas valide" })
+  @IsString({ message: "L'URL de l'image doit être une chaîne de caractères" })
   @IsNotEmpty({ message: "L'URL de l'image est obligatoire" })
   imageUrl: string;
 }

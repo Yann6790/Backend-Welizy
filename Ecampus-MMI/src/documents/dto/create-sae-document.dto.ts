@@ -1,8 +1,8 @@
-import { IsEnum, IsString, IsUrl } from 'class-validator';
+import { IsEnum, IsString } from 'class-validator';
 import { DocumentType } from '@prisma/client';
 
 export class CreateSaeDocumentDto {
-  @IsUrl()
+  @IsString()
   url: string;
 
   @IsString()
