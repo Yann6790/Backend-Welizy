@@ -95,6 +95,7 @@ async function main() {
   const teacher = await prisma.user.create({
     data: {
       email: 'prof@mmi.fr',
+      name: 'Marc Professeur',
       firstname: 'Marc',
       lastname: 'Professeur',
       role: UserRole.TEACHER,
@@ -105,6 +106,7 @@ async function main() {
   const student = await prisma.user.create({
     data: {
       email: 'student@mmi.fr',
+      name: 'Alice Student',
       firstname: 'Alice',
       lastname: 'Student',
       role: UserRole.STUDENT,
