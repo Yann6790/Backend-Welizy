@@ -15,7 +15,16 @@ async function bootstrap(): Promise<void> {
   ];
 
   app.enableCors({
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      // Autoriser les requêtes sans origin (ex: curl, Postman)
+      if (!origin) return callback(null, true);
+      // Autoriser les origines explicitement listées
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      // Autoriser toutes les URLs de preview Vercel du projet Welizy
+      if (origin.endsWith('-welizy.vercel.app') || origin === 'https://welizy.vercel.app')
+        return callback(null, true);
+      callback(new Error('Not allowed by CORS'));
+    },
     credentials: true,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
   });

@@ -5,7 +5,7 @@ import { admin } from 'better-auth/plugins';
 
 const prisma = new PrismaClient();
 
-const trustedOrigins = [
+const staticOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
   'https://ecampus-mmi.onrender.com',
@@ -13,6 +13,13 @@ const trustedOrigins = [
   'https://welizy.fr.yann.allain.mmi-velizy.fr',
   'https://ecampus-mmi.vercel.app',
 ];
+
+// Inclut les URLs de preview Vercel dynamiques (hash change à chaque deploy)
+const isVercelPreview = (origin: string) =>
+  origin.endsWith('-welizy.vercel.app') || origin === 'https://welizy.vercel.app';
+
+const trustedOrigins = (origin: string) =>
+  staticOrigins.includes(origin) || isVercelPreview(origin);
 
 export const auth = betterAuth({
   database: prismaAdapter(prisma, {
