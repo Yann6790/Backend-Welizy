@@ -1,13 +1,13 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
-import * as express from 'express';
-import type { Request, Response, NextFunction } from 'express';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import type { Request, Response, NextFunction } from 'express';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   app.enableCors({
     origin: true,
@@ -25,7 +25,7 @@ async function bootstrap(): Promise<void> {
 
   const publicPath = join(__dirname, '..', 'public');
   if (existsSync(publicPath)) {
-    app.use(express.static(publicPath));
+    app.useStaticAssets(publicPath);
     app.use((req: Request, res: Response, next: NextFunction) => {
       if (!req.path.startsWith('/api') && req.method === 'GET') {
         return res.sendFile(join(publicPath, 'index.html'));
