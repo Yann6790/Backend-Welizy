@@ -55,7 +55,12 @@ export class GradesController {
     @Body() dto: CreateGradeCategoryDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    const data = await this.gradesService.createCategory(saeId, dto, user.sub);
+    const data = await this.gradesService.createCategory(
+      saeId,
+      dto,
+      user.sub,
+      user.role,
+    );
     return { success: true, data };
   }
 
@@ -70,6 +75,7 @@ export class GradesController {
     const buffer = await this.gradesService.exportGradesToExcel(
       saeId,
       user.sub,
+      user.role,
     );
     res.set({
       'Content-Type':
@@ -93,6 +99,7 @@ export class GradesController {
       saeId,
       file.buffer,
       user.sub,
+      user.role,
     );
     return { success: true, message: 'Notes importées avec succès' };
   }
@@ -109,6 +116,7 @@ export class GradesController {
       submissionId,
       body.grades,
       user.sub,
+      user.role,
     );
     return { success: true, data };
   }

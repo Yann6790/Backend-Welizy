@@ -99,12 +99,19 @@ export class UsersService {
         temporaryPassword,
       });
     } catch (error) {
-      await this.prisma.user.delete({
-        where: { id: response.user.id },
-      });
-      throw new InternalServerErrorException(
-        "Échec de l'envoi des identifiants par email. Le compte enseignant n'a pas été créé.",
+      console.warn(
+        `[UsersService] Impossible d'envoyer l'email des identifiants: ${error?.message}. Les identifiants sont renvoyés à l'interface d'administration.`,
       );
+    }
+
+    // S'assurer que le profil enseignant existe bien
+    const teacherProfile = await this.prisma.teacherProfile.findUnique({
+      where: { userId: response.user.id },
+    });
+    if (!teacherProfile) {
+      await this.prisma.teacherProfile.create({
+        data: { userId: response.user.id },
+      });
     }
 
     return {

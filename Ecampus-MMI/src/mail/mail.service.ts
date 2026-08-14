@@ -1,37 +1,65 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 import { TeacherCredentialsPayload } from './types/mail.types';
 
 @Injectable()
 export class MailService {
-  private readonly resend: Resend;
+  private readonly resend?: Resend;
   private readonly fromEmail: string;
 
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.get<string>('RESEND_API_KEY');
-    const fromEmail = this.configService.get<string>('RESEND_FROM_EMAIL');
+    const fromEmail =
+      this.configService.get<string>('RESEND_FROM_EMAIL') ||
+      'onboarding@resend.dev';
 
-    if (!apiKey) throw new Error('RESEND_API_KEY is not defined');
-    if (!fromEmail) throw new Error('RESEND_FROM_EMAIL is not defined');
+    if (apiKey && apiKey.trim() !== '') {
+      try {
+        this.resend = new Resend(apiKey);
+      } catch (err) {
+        console.warn(
+          '[MailService] Impossible d\'initialiser Resend:',
+          err?.message,
+        );
+      }
+    } else {
+      console.warn(
+        '[MailService] RESEND_API_KEY non fournie. Les emails d\'invitation ne seront pas envoyés via Resend.',
+      );
+    }
 
-    this.resend = new Resend(apiKey);
     this.fromEmail = fromEmail;
   }
 
   async sendTeacherCredentials(
     payload: TeacherCredentialsPayload,
   ): Promise<void> {
-    const { data, error } = await this.resend.emails.send({
-      from: this.fromEmail,
-      to: payload.email,
-      subject: 'Bienvenue sur la plateforme SAE — Vos identifiants',
-      html: this.buildTeacherWelcomeTemplate(payload),
-    });
+    if (!this.resend) {
+      console.log(
+        `[MailService Mock] Email pour ${payload.email} — Mot de passe temporaire : ${payload.temporaryPassword}`,
+      );
+      return;
+    }
 
-    if (error) {
-      throw new InternalServerErrorException(
-        "Échec de l'envoi de l'email de bienvenue",
+    try {
+      const { error } = await this.resend.emails.send({
+        from: this.fromEmail,
+        to: payload.email,
+        subject: 'Bienvenue sur la plateforme SAE — Vos identifiants',
+        html: this.buildTeacherWelcomeTemplate(payload),
+      });
+
+      if (error) {
+        console.warn(
+          `[MailService] Erreur retournée par Resend pour ${payload.email}:`,
+          error,
+        );
+      }
+    } catch (err) {
+      console.warn(
+        `[MailService] Échec lors de l'envoi d'email à ${payload.email}:`,
+        err?.message,
       );
     }
   }

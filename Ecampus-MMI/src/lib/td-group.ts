@@ -11,8 +11,23 @@ export function deriveTdGroupFromGroupName(
 
   const normalized = groupName.trim().toUpperCase();
 
-  if (/\bA[12]\b/.test(normalized)) return 'A';
-  if (/\bB[12]\b/.test(normalized)) return 'B';
+  if (
+    /\bA[12]?\b/.test(normalized) ||
+    normalized.startsWith('A') ||
+    normalized.includes('GROUPE A') ||
+    normalized.includes('TD A')
+  ) {
+    return 'A';
+  }
 
-  return null;
+  if (
+    /\bB[12]?\b/.test(normalized) ||
+    normalized.startsWith('B') ||
+    normalized.includes('GROUPE B') ||
+    normalized.includes('TD B')
+  ) {
+    return 'B';
+  }
+
+  return 'A';
 }

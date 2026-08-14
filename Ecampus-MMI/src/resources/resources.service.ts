@@ -48,26 +48,31 @@ export class ResourcesService {
     });
     if (!sae) throw new BadRequestException('SAE non trouvée');
 
-    let uploadResult;
-    try {
-      uploadResult = await this.utapi.uploadFiles(
-        new File([new Uint8Array(file.buffer)], file.originalname, {
-          type: file.mimetype,
-        }),
-      );
+    let fileUrl = '';
+    let fileName = file.originalname;
+    let fileKey: string | null = null;
 
-      if (!uploadResult.data) {
-        throw new InternalServerErrorException(
-          "L'upload vers UploadThing a échoué",
+    try {
+      if (process.env.UPLOADTHING_TOKEN) {
+        const uploadResult = await this.utapi.uploadFiles(
+          new File([new Uint8Array(file.buffer)], file.originalname, {
+            type: file.mimetype,
+          }),
         );
+        if (uploadResult?.data?.url) {
+          fileUrl = uploadResult.data.url;
+          fileName = uploadResult.data.name || file.originalname;
+          fileKey = uploadResult.data.key;
+        }
       }
     } catch (error) {
-      throw new InternalServerErrorException(
-        "Erreur lors de l'upload : " + error.message,
-      );
+      console.warn('[ResourcesService] UploadThing a échoué:', error?.message);
     }
 
-    const fileData = uploadResult.data;
+    if (!fileUrl) {
+      const base64 = file.buffer.toString('base64');
+      fileUrl = `data:${file.mimetype};base64,${base64}`;
+    }
 
     try {
       if (role === UserRole.STUDENT) {
@@ -80,8 +85,8 @@ export class ResourcesService {
         return await this.documentsService.submitDocument(
           dto.saeId,
           {
-            url: fileData.url,
-            fileName: fileData.name,
+            url: fileUrl,
+            fileName: fileName,
             mimeType: file.mimetype,
             description: dto.description,
             imageUrl: dto.imageUrl,
@@ -92,8 +97,8 @@ export class ResourcesService {
         return await this.documentsService.addSaeDocument(
           dto.saeId,
           {
-            url: fileData.url,
-            name: fileData.name,
+            url: fileUrl,
+            name: fileName,
             mimeType: file.mimetype,
             type: dto.type || 'RESOURCE',
           },
@@ -101,7 +106,11 @@ export class ResourcesService {
         );
       }
     } catch (error) {
-      await this.utapi.deleteFiles(fileData.key);
+      if (fileKey) {
+        try {
+          await this.utapi.deleteFiles(fileKey);
+        } catch {}
+      }
       throw error;
     }
   }
@@ -124,24 +133,24 @@ export class ResourcesService {
     }
 
     try {
-      const uploadResult = await this.utapi.uploadFiles(
-        new File([new Uint8Array(file.buffer)], file.originalname, {
-          type: file.mimetype,
-        }),
-      );
-
-      if (!uploadResult.data) {
-        throw new InternalServerErrorException(
-          "L'upload de l'image de profil a échoué",
+      if (process.env.UPLOADTHING_TOKEN) {
+        const uploadResult = await this.utapi.uploadFiles(
+          new File([new Uint8Array(file.buffer)], file.originalname, {
+            type: file.mimetype,
+          }),
         );
-      }
 
-      return { url: uploadResult.data.url };
+        if (uploadResult?.data?.url) {
+          return { url: uploadResult.data.url };
+        }
+      }
     } catch (error) {
-      throw new InternalServerErrorException(
-        "Erreur lors de l'upload de l'image : " + error.message,
-      );
+      console.warn('[ResourcesService] UploadThing profile upload failed:', error?.message);
     }
+
+    // Fallback Data URL
+    const base64 = file.buffer.toString('base64');
+    return { url: `data:${file.mimetype};base64,${base64}` };
   }
 
   async findAllPromotions(): Promise<PromotionResponse[]> {

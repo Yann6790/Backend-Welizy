@@ -23,6 +23,7 @@ export class GradesService {
     saeId: string,
     dto: CreateGradeCategoryDto,
     requestingUserId: string,
+    requestingUserRole?: UserRole,
   ): Promise<GradeCategoryResponse> {
     const sae = await this.prisma.sae.findUnique({
       where: { id: saeId, deletedAt: null },
@@ -40,6 +41,7 @@ export class GradesService {
       sae.createdById,
       sae.invitations,
       requestingUserId,
+      requestingUserRole,
     );
 
     if (new Date() <= sae.dueDate) {
@@ -65,6 +67,7 @@ export class GradesService {
   async exportGradesToExcel(
     saeId: string,
     requestingUserId: string,
+    requestingUserRole?: UserRole,
   ): Promise<Buffer> {
     const sae = await this.prisma.sae.findUnique({
       where: { id: saeId, deletedAt: null },
@@ -87,6 +90,7 @@ export class GradesService {
       sae.createdById,
       sae.invitations,
       requestingUserId,
+      requestingUserRole,
     );
 
     if (new Date() <= sae.dueDate) {
@@ -131,6 +135,7 @@ export class GradesService {
     saeId: string,
     fileBuffer: Buffer,
     requestingUserId: string,
+    requestingUserRole?: UserRole,
   ): Promise<void> {
     const sae = await this.prisma.sae.findUnique({
       where: { id: saeId, deletedAt: null },
@@ -147,6 +152,7 @@ export class GradesService {
       sae.createdById,
       sae.invitations,
       requestingUserId,
+      requestingUserRole,
     );
 
     if (new Date() <= sae.dueDate) {
@@ -219,6 +225,7 @@ export class GradesService {
     submissionId: string,
     grades: SetGradeDto[],
     requestingUserId: string,
+    requestingUserRole?: UserRole,
   ): Promise<SubmissionGradesResponse> {
     const submission = await this.prisma.studentSubmission.findUnique({
       where: { id: submissionId },
@@ -239,6 +246,7 @@ export class GradesService {
       submission.sae.createdById,
       submission.sae.invitations,
       requestingUserId,
+      requestingUserRole,
     );
 
     if (new Date() <= submission.sae.dueDate) {
@@ -446,13 +454,15 @@ export class GradesService {
     createdById: string,
     invitations: { userId: string }[],
     requestingUserId: string,
+    requestingUserRole?: UserRole,
   ): void {
     const isOwner = createdById === requestingUserId;
     const isInvited = invitations.some(
       (inv) => inv.userId === requestingUserId,
     );
+    const isAdmin = requestingUserRole === UserRole.ADMIN;
 
-    if (!isOwner && !isInvited) {
+    if (!isOwner && !isInvited && !isAdmin) {
       throw new ForbiddenException('Droit de gestion des notes refusé');
     }
   }
