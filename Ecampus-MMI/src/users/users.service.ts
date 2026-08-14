@@ -72,7 +72,7 @@ export class UsersService {
 
     const temporaryPassword = this.generateTemporaryPassword();
 
-    const response = await auth.api.createUser({
+    const response = await (auth.api as any).createUser({
       body: {
         email: dto.email,
         name: `${dto.firstname} ${dto.lastname}`,

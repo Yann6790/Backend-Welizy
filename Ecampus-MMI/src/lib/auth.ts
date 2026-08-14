@@ -18,8 +18,13 @@ const staticOrigins = [
 const isVercelPreview = (origin: string) =>
   origin.endsWith('-welizy.vercel.app') || origin === 'https://welizy.vercel.app';
 
-const trustedOrigins = (origin: string) =>
-  staticOrigins.includes(origin) || isVercelPreview(origin);
+const trustedOrigins = (request?: Request): string[] => {
+  const origin = request?.headers?.get('origin');
+  if (origin && isVercelPreview(origin)) {
+    return [...staticOrigins, origin];
+  }
+  return [...staticOrigins];
+};
 
 export const auth = betterAuth({
   database: prismaAdapter(prisma, {
